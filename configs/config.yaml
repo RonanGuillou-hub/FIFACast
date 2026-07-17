@@ -14,6 +14,7 @@ paths:
   models_history: "models"
   reports: "reports"
   raw_filename: "footcast_result.csv"
+  new_filename: "footcast_new.csv"
   processed_filename: "footcast_clean.csv"
   model_filename: "foot-cast.joblib"
   predictions_filename: "reports/footcast_pred.csv"
@@ -53,16 +54,17 @@ external:
 # -----------------------------------------------------------------------------
 model:
   type: "RandomForestClassifier"
+  target: "home_win"
   params:
     n_estimators: 200
     random_state: 42
   features:
+
     numeric:
       - "diff_avg_points"
       - "diff_avg_goals_scored"
       - "diff_avg_goals_conceded"
       - "outcome"
-      
       - "is_neutral"
       - "is_friendly"
     categorical:

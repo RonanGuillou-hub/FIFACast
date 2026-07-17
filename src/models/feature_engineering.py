@@ -49,7 +49,8 @@ class FeatureEngineer(BaseEstimator, TransformerMixin):
         draw = (X["home_score"] == X["away_score"])
         X = X[~draw].copy()
         
-        X["home_win"]= np.where(X["home_score"] > X["away_score"], 1, 0)
+        X["is_neutral"] = np.where(X["neutral"] == True, 1, 0)
+        X["is_friendly"] = np.where(X["tournament"] == "Friendly", 1, 0)
 
         return X
 

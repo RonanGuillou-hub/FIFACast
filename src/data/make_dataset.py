@@ -33,21 +33,22 @@ logger = logging.getLogger(__name__)
 
 CONFIG = load_config()
 
-
 DATA_URL = CONFIG["external"]["match_result"]["csv_url"]
-
 PROCESSED_DATA_DIR = Path(CONFIG["paths"]["data"]["processed"])
-PROCESSED_FILENAME = CONFIG["paths"]["processed_filename"]
 RAW_DATA_DIR = Path(CONFIG["paths"]["data"]["raw"])
+EXTERNAL_DATA_DIR = Path(CONFIG["paths"]["data"]["external"])
+
 RAW_FILENAME = CONFIG["paths"]["raw_filename"]
+PROCESSED_FILENAME = CONFIG["paths"]["processed_filename"]
+NEW_FILENAME = CONFIG["paths"]["new_filename"]
 
-
+TARGET_COL = CONFIG["model"]["target"]
 REQUIRED_COLUMNS = ["date","home_team","away_team","home_score","away_score","tournament","city","country","neutral"]
 
 # ---------------------------------------------------------------------------
 # 1. RECUPERATION DU FIHCIER HISTORIQUE
 # ---------------------------------------------------------------------------
-def load_raw_data():
+def load_raw_data(data_path: str):
     """Load the international results dataset and parse dates.
 
     Arguments:
@@ -58,13 +59,10 @@ def load_raw_data():
           with an extra 'year' column
     """
     try:
-        df = pd.read_csv(DATA_URL)
-        df.to_csv(Path(RAW_DATA_DIR, RAW_FILENAME), index=False, sep=";", encoding="utf-8-sig")
-
+        df = pd.read_csv(data_path)
+ 
     except FileNotFoundError:
-        raise FileNotFoundError(
-            f"Le fichier '{DATA_URL}' est introuvable."
-        ) from None
+        raise FileNotFoundError(f"Le fichier '{data_path}' est introuvable.") from None
 
     return df
 
@@ -91,7 +89,7 @@ def clean_data(df: pd.DataFrame) -> pd.DataFrame:
     n_before = len(df)
     df = df.dropna(subset=["home_score", "away_score"])
     logger.info("%d NaN supprimés", n_before - len(df)) 
-    ["total_goals"] = (df["home_score"] + df["away_score"]).astype(int)
+    df["total_goals"] = (df["home_score"] + df["away_score"]).astype(int)
 
     # suppression des outliers
     high_band   = df["total_goals"].mean() + df["total_goals"].std()*3
@@ -131,7 +129,18 @@ def clean_data(df: pd.DataFrame) -> pd.DataFrame:
                                 np.where(df["outcome"] == "away_win",
                                     df["away_team"], 
                                     np.nan))
-        
+
+
+      
+    # Variable cible
+    df[TARGET_COL]= np.where(df["home_score"] > df["away_score"], 1, 0)
+
+    try:
+        df[TARGET_COL] = df[TARGET_COL].astype(int)
+    
+    except ValueError as e:
+        raise ValueError(f"Impossible de convertir {TARGET_COL} en int") from e
+
     # tri
     df = (
         df
@@ -236,36 +245,31 @@ def upload_file_to_s3(local_file: Path, bucket: str, key_prefix: str) -> None:
     logger.info("Fichier persisté sur s3://%s/%s", bucket, s3_key)
 
 
-def fetch_external_data(df: pd.DataFrame) -> pd.DataFrame:
+def load_external_data(external_dir: Path,
+                        cache_dir: Path) -> pd.DataFrame:
     """
-    Récupère la météo pour toutes les combinaisons (région, plage de dates)
-    présentes dans le dataset principal. Appelée à chaque exécution de
-    make_dataset.py, donc toujours à jour — pas de dépendance à un cache
-    pour fonctionner.
-
-    Le résultat est sauvegardé localement (external.weather.cache_file)
-    puis persisté sur S3 (external.weather.s3), car le disque de
-    l'instance GPU HuggingFace est éphémère et disparaît à la fin du job.
+    Récupère les données externes, nouveaux match
     """
-    start_date = df["date"].min().strftime("%Y-%m-%d")
-    end_date = df["date"].max().strftime("%Y-%m-%d")
 
-    frames = []
-    for region in df["region"].dropna().unique():
-        logger.info("Récupération météo pour %s (%s → %s)", region, start_date, end_date)
-        try:
-            frames.append(fetch_weather_for_region(region, start_date, end_date))
-        except Exception as e:
-            logger.warning("Échec de récupération météo pour %s : %s", region, e)
+    dfs = []
 
-    if not frames:
-        raise RuntimeError("Aucune donnée météo récupérée — vérifie la connectivité à l'API météo.")
+    for fic in Path(external_dir).glob('*.csv'):
+        if fic.is_file():
+            logger.info(f"Récupération nouveaux matchs pour {fic.name}")
+            dfs.append(pd.read_csv(fic))
 
-    external_df = pd.concat(frames, ignore_index=True)
+    if not dfs:
+        raise RuntimeError("Aucun nouveau match")
 
-    cache_file = Path(CONFIG["external"]["weather"]["cache_file"])
+    external_df = pd.concat(dfs, ignore_index=True)
+    cache_file = Path(cache_dir / NEW_FILENAME)
     cache_file.parent.mkdir(parents=True, exist_ok=True)
+
+    
     external_df.to_csv(cache_file, index=False)
+
+
+
 
     s3_cfg = CONFIG.get("s3")
     if s3_cfg:
@@ -298,27 +302,32 @@ def merge_external_data(df: pd.DataFrame, external_df: pd.DataFrame) -> pd.DataF
 
 def main():
     parser = argparse.ArgumentParser(description="Prépare le dataset pour l'entraînement.")
-    parser.add_argument("--input", type=Path, default=RAW_DATA_DIR, help="Dossier des données brutes")
+    parser.add_argument("--data", type=str, default=DATA_URL, help="Dossier des données brutes")
+    parser.add_argument("--input", type=Path, default=RAW_DATA_DIR, help="Dossier de sortie")
     parser.add_argument("--output", type=Path, default=PROCESSED_DATA_DIR, help="Dossier de sortie")
+    parser.add_argument("--external", type=Path, default=EXTERNAL_DATA_DIR, help="Dossier externe")
+  
     parser.add_argument(
         "--skip-external",
         action="store_true",
-        help="Ne pas appeler l'API météo (utile pour un test rapide hors ligne)",
+        help="Ne pas fusionner avec les nouveaux match",
     )
+
     args = parser.parse_args()
 
-    df = load_raw_data(args.input)
+    df = load_raw_data(args.data)
     df = clean_data(df)
 
     if not args.skip_external:
         external_df = fetch_external_data(df)
-        df = merge_external_data(df, external_df)
+        #df = merge_external_data(df, external_df)
+        logger.info("Fusion nouvelles données ok (--skip-external)")
     else:
-        logger.info("Fusion météo ignorée (--skip-external)")
+        logger.info("Fusion nouvelles données ignorée (--skip-external)")
 
-    output_file = save_processed_data(df, args.output)
+    #output_file = save_processed_data(df, args.output)
 
-    logger.info("Données traitées sauvegardées dans %s (%d lignes)", output_file, len(df))
+    #logger.info("Données traitées sauvegardées dans %s (%d lignes)", output_file, len(df))
 
 
 if __name__ == "__main__":

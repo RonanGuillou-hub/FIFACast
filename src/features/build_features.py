@@ -6,7 +6,6 @@ keep the main notebook readable. Curious? Feel free to read the functions!
 """
 
 from collections import defaultdict, deque
-
 import pandas as pd
 
 DATA_URL = "https://github.com/martj42/international_results"
@@ -31,35 +30,36 @@ ROUND_NAMES = [
 ]
 
 
-def load_results(path="data/results.csv"):
-    """Load the international results dataset and parse dates.
+def load_results(path="data/processed/footcast_result.csv"):
+    """Charge les resultats 
 
     Arguments:
-    path -- location of the results.csv file
+    path -- location of the footcast_result.csv file
 
     Returns:
-    df -- DataFrame with one row per international match, sorted by date,
-          with an extra 'year' column
+    df -- DataFrame avec une ligne pa match
     """
     try:
         df = pd.read_csv(path)
+
     except FileNotFoundError:
         raise FileNotFoundError(
             f"Le fichier '{path}' est introuvable. Télécharge 'results.csv' "
             f"depuis {DATA_URL} et place-le dans le dossier 'data/' du projet "
             "(voir les instructions de la Partie 1 du notebook)."
         ) from None
-    df["date"] = pd.to_datetime(df["date"])
-    df["year"] = df["date"].dt.year
-    return df.sort_values("date").reset_index(drop=True)
+
+    return df
 
 
 def _points(goals_for, goals_against):
-    """Return the number of points earned for one match (3/1/0)."""
+    """ Retourne le nombre de points gagnés par match (3/1/0)."""
+
     if goals_for > goals_against:
         return 3
     if goals_for == goals_against:
         return 1
+    
     return 0
 
 
@@ -80,11 +80,13 @@ def add_recent_form(df, window=10, min_matches=5):
           home_avg_points, home_avg_goals_scored, home_avg_goals_conceded,
           away_avg_points, away_avg_goals_scored, away_avg_goals_conceded
     """
+    # créé la fenêtre d'historique de taille 'windows' dans un dictionnaire
     history = defaultdict(lambda: deque(maxlen=window))
     new_columns = []
 
     for row in df.itertuples():
         features = {}
+
         for side, team in [("home", row.home_team), ("away", row.away_team)]:
             past = history[team]
             if len(past) >= min_matches:
@@ -120,11 +122,13 @@ def get_current_form(df, team, window=10):
         raise ValueError(f"Aucun match trouvé pour l'équipe '{team}'. Vérifie l'orthographe (noms en anglais).")
 
     points, scored, conceded = [], [], []
+
     for row in last_matches.itertuples():
         if row.home_team == team:
             goals_for, goals_against = row.home_score, row.away_score
         else:
             goals_for, goals_against = row.away_score, row.home_score
+        
         points.append(_points(goals_for, goals_against))
         scored.append(goals_for)
         conceded.append(goals_against)
