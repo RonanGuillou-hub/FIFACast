@@ -1,0 +1,17 @@
+numpy
+pandas
+scikit-learn
+matplotlib
+seaborn
+jupyter
+pyyaml
+pytest
+mlflow
+huggingface_hub
+joblib
+requests
+boto3
+fastapi
+uvicorn[standard]
+streamlit
+python-dotenv

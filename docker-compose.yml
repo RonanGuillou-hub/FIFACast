@@ -1,0 +1,69 @@
+version: "3.9"
+
+services:
+  ml:
+    build: .
+    container_name: mon-projet-ml
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+      - ./reports:/app/reports
+      - ./src:/app/src
+      - ./configs:/app/configs
+    command: python -m src.models.train
+    # Décommente pour utiliser un GPU (nécessite nvidia-container-toolkit) :
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+  notebook:
+    build: .
+    container_name: mon-projet-ml-notebook
+    ports:
+      - "8888:8888"
+    volumes:
+      - .:/app
+    command: jupyter notebook --ip=0.0.0.0 --port=8888 --no-browser --allow-root
+
+  api:
+    build: .
+    container_name: mon-projet-ml-api
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./models:/app/models
+      - ./configs:/app/configs
+      - ./src:/app/src
+    environment:
+      - MLFLOW_TRACKING_URI=${MLFLOW_TRACKING_URI:-}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
+    command: python -m uvicorn src.api.main:app --host 0.0.0.0 --port 8000
+    healthcheck:
+      # curl n'est pas installé dans l'image (python:3.11-slim) -- on
+      # utilise urllib, déjà présent dans la stdlib, pour ne pas alourdir
+      # l'image avec un paquet supplémentaire juste pour ça.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+
+  streamlit:
+    build: .
+    container_name: mon-projet-ml-streamlit
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./src:/app/src
+      - ./configs:/app/configs
+    environment:
+      - API_URL=http://api:8000
+    depends_on:
+      api:
+        condition: service_healthy
+    command: python -m streamlit run src/app/streamlit_app.py --server.port 8501 --server.address 0.0.0.0

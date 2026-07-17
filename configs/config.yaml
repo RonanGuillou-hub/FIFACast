@@ -1,0 +1,91 @@
+# =============================================================================
+# Configuration du projet — UNIQUEMENT des variables non-secrètes.
+# Les secrets (tokens, credentials) restent en variables d'environnement
+# (GitHub Secrets en CI, .env en local) — jamais dans ce fichier.
+# =============================================================================
+
+paths:
+  data:
+    raw: "data/raw"
+    interim: "data/interim"
+    processed: "data/processed"
+    external: "data/external"
+  models: "models"
+  models_history: "models"
+  reports: "reports"
+  raw_filename: "footcast_result.csv"
+  processed_filename: "footcast_clean.csv"
+  model_filename: "foot-cast.joblib"
+  predictions_filename: "reports/footcast_pred.csv"
+
+s3:
+  bucket: "mon-projet-ml-data"
+  prefixes:
+    processed: "processed/dataset_clean"
+    match_result: "external/match_result"
+
+# -----------------------------------------------------------------------------
+# API d'inférence (src/api/) + interface Streamlit (src/app/)
+# -----------------------------------------------------------------------------
+api:
+  host: "0.0.0.0"
+  port: 8000
+  model_source: "mlflow"
+  s3:
+    bucket: "mon-projet-ml-data"
+    key: "models/foot-cast.joblib"
+
+streamlit:
+  api_url: "http://localhost:8000"
+
+# -----------------------------------------------------------------------------
+# Données externes
+# -----------------------------------------------------------------------------
+external:
+  match_result:
+    provider: "github"
+    csv_url: "https://raw.githubusercontent.com/martj42/international_results/master/results.csv"
+    timezone: "Europe/Paris"
+    cache_file: "data/external/foot-cast.csv"
+
+# -----------------------------------------------------------------------------
+# Modèle (src/models/train.py)
+# -----------------------------------------------------------------------------
+model:
+  type: "RandomForestClassifier"
+  params:
+    n_estimators: 200
+    random_state: 42
+  features:
+    numeric:
+      - "diff_avg_points"
+      - "diff_avg_goals_scored"
+      - "diff_avg_goals_conceded"
+      - "outcome"
+      
+      - "is_neutral"
+      - "is_friendly"
+    categorical:
+      - "tournament"
+      - "city"
+
+# -----------------------------------------------------------------------------
+# Entraînement (src/models/train.py)
+# -----------------------------------------------------------------------------
+training:
+  test_size: 0.2
+  random_state: 42
+  cv_folds: 5
+  scoring: "accuracy"
+
+mlflow:
+  experiment_name: "foot-cast"
+  default_tracking_uri: "https://ronan-guillou-mlflow-test.hf.space/"
+  registered_model_name: "foot-cast"
+  model_alias: "champion"
+
+huggingface:
+  model_repo: "ronan-guillou/foot-cast"
+  job_image: "pytorch/pytorch:2.3.0-cuda12.1-cudnn8-runtime"
+  job_flavor: "a10g-small"
+  
